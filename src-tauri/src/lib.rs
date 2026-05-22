@@ -32,48 +32,86 @@ async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
 
     let handle_for_navigation = app_handle.clone();
+    let handle_for_script = app_handle.clone();
 
-    let _window =
-        tauri::WebviewWindowBuilder::new(&app_handle, "login", tauri::WebviewUrl::External(url))
-            .title("Вход в Proxu")
-            .inner_size(600.0, 700.0)
-            .resizable(true)
-            .on_navigation(move |url| {
-                let has_token = url
-                    .query()
-                    .map(|q| q.contains("token=") && q.contains("email="))
-                    .unwrap_or(false);
+    let _window = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        "login",
+        tauri::WebviewUrl::External(url),
+    )
+    .title("Вход в Proxu")
+    .inner_size(600.0, 700.0)
+    .resizable(true)
+    .initialization_script(
+        r#"
+        (function () {
+          function notifyToken(token, email) {
+            if (!token) return;
+            window.__PROXU_TOKEN_SENT__ = true;
+            window.location.href = 'proxu-desktop://auth?token=' + encodeURIComponent(token) + '&email=' + encodeURIComponent(email || '');
+          }
+          function checkToken() {
+            try {
+              var token = localStorage.getItem('superproxy_token');
+              var email = localStorage.getItem('superproxy_email') || '';
+              if (token && !window.__PROXU_TOKEN_SENT__) notifyToken(token, email);
+            } catch (_) {}
+          }
+          setInterval(checkToken, 400);
+          document.addEventListener('DOMContentLoaded', checkToken);
+        })();
+        "#,
+    )
+    .on_navigation(move |url| {
+        let mut token = String::new();
+        let mut email = String::new();
 
-                if has_token {
-                    let mut token = String::new();
-                    let mut email = String::new();
-                    for (key, val) in url.query_pairs() {
-                        if key == "token" {
-                            token = val.into_owned();
-                        } else if key == "email" {
-                            email = val.into_owned();
-                        }
-                    }
-
-                    if !token.is_empty() && !email.is_empty() {
-                        let mut config = config::load_config();
-                        config.token = Some(token.clone());
-                        config.email = Some(email.clone());
-                        let _ = config::save_config(&config);
-
-                        let _ = handle_for_navigation.emit("login-success", (token, email));
-                        if let Some(login_window) =
-                            handle_for_navigation.get_webview_window("login")
-                        {
-                            let _ = login_window.close();
-                        }
-                        return false;
-                    }
+        if url.scheme() == "proxu-desktop" || url.query().map(|q| q.contains("token=")).unwrap_or(false) {
+            for (key, val) in url.query_pairs() {
+                if key == "token" {
+                    token = val.into_owned();
+                } else if key == "email" {
+                    email = val.into_owned();
                 }
-                true
-            })
-            .build()
-            .map_err(|e| e.to_string())?;
+            }
+        }
+
+        if !token.is_empty() {
+            let mut config = config::load_config();
+            config.token = Some(token.clone());
+            if !email.is_empty() {
+                config.email = Some(email.clone());
+            }
+            let _ = config::save_config(&config);
+
+            let _ = handle_for_navigation.emit("login-success", (token, email));
+            if let Some(login_window) = handle_for_navigation.get_webview_window("login") {
+                let _ = login_window.close();
+            }
+            return false;
+        }
+
+        true
+    })
+    .on_page_load(move |window, _payload| {
+        let _ = window.eval(
+            r#"
+            (function () {
+              try {
+                var token = localStorage.getItem('superproxy_token');
+                var email = localStorage.getItem('superproxy_email') || '';
+                if (token && !window.__PROXU_TOKEN_SENT__) {
+                  window.__PROXU_TOKEN_SENT__ = true;
+                  window.location.href = 'proxu-desktop://auth?token=' + encodeURIComponent(token) + '&email=' + encodeURIComponent(email || '');
+                }
+              } catch (_) {}
+            })();
+            "#,
+        );
+        let _ = handle_for_script.emit("login-page-loaded", ());
+    })
+    .build()
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -146,7 +184,9 @@ async fn fetch_profile(token: String) -> Result<AppConfig, String> {
 
     let mut current_config = config::load_config();
     current_config.balance = Some(balance_str);
-    current_config.email = api_profile.email;
+    if api_profile.email.is_some() {
+        current_config.email = api_profile.email;
+    }
     let _ = config::save_config(&current_config);
 
     Ok(current_config)

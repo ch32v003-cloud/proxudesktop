@@ -90,9 +90,7 @@ function showDashboard() {
   dashboardPanel.style.display = "flex";
   userProfile.style.display = "flex";
   
-  if (appConfig.email) {
-    userEmailText.textContent = appConfig.email;
-  }
+  userEmailText.textContent = appConfig.email || "Proxu account";
   if (appConfig.balance) {
     userBalanceText.textContent = appConfig.balance;
   }
@@ -320,7 +318,7 @@ window.addEventListener("DOMContentLoaded", () => {
   listen<[string, string]>("login-success", (event) => {
     const [token, email] = event.payload;
     appConfig.token = token;
-    appConfig.email = email;
+    if (email) appConfig.email = email;
     showDashboard();
     refreshProfileAndProxies();
   });
