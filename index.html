@@ -18,8 +18,14 @@
       <div class="user-profile" id="user-profile" style="display: none;">
         <span id="user-email" class="user-email">email@domain.com</span>
         <div class="balance-badge">
-          <span id="user-balance">0</span> ₽
+          <span id="user-balance">0</span>
         </div>
+        <button id="settings-toggle-btn" class="btn btn-icon-only" title="Настройки">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
         <button id="logout-button" class="btn btn-icon-only" title="Logout">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
         </button>
@@ -48,43 +54,266 @@
         </div>
       </section>
 
-      <!-- Dashboard Panel -->
-      <section id="dashboard-panel" class="panel dashboard-layout" style="display: none;">
-        <!-- Circle Connection Toggle -->
-        <div class="connection-section">
-          <div class="connection-circle-outer" id="connection-btn">
-            <div class="connection-circle-inner">
-              <svg id="power-icon" viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2.5">
-                <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
-              </svg>
-            </div>
+    <!-- Dashboard Panel -->
+    <section id="dashboard-panel" class="panel dashboard-layout" style="display: none;">
+      <!-- Circle Connection Toggle -->
+      <div class="connection-section">
+        <div class="connection-circle-outer" id="connection-btn">
+          <div class="connection-circle-inner">
+            <svg id="power-icon" viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
+            </svg>
           </div>
-          <div class="connection-state">
-            <span id="connection-status" class="status-text disconnected">Отключено</span>
-            <span id="connection-details" class="details-text">Выберите сервер и нажмите кнопку для подключения</span>
+        </div>
+        <div class="connection-state">
+          <span id="connection-status" class="status-text disconnected">Отключено</span>
+          <span id="connection-details" class="details-text">Выберите сервер и нажмите кнопку для подключения</span>
+        </div>
+      </div>
+
+      <!-- System Settings Section -->
+      <div class="settings-card glassmorphic-card">
+        <div class="switch-row">
+          <span class="switch-label">Системный прокси</span>
+          <label class="switch-control">
+            <input type="checkbox" id="system-proxy-toggle" checked />
+            <span class="slider round"></span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Server Selector -->
+      <div class="servers-section">
+        <h3>Доступные серверы</h3>
+        <div id="servers-list" class="servers-list">
+          <!-- Dynamically populated -->
+          <div class="loading-placeholder">Загрузка серверов...</div>
+        </div>
+      </div>
+
+      <!-- IP Info -->
+      <div class="ip-info-section">
+        <div class="ip-info-row">
+          <span class="ip-label">IP:</span>
+          <span id="ip-value" class="ip-value">--</span>
+          <span id="ip-country" class="ip-country"></span>
+        </div>
+        <div class="ip-info-row">
+          <span class="ip-label">Провайдер:</span>
+          <span id="ip-isp" class="ip-isp">--</span>
+        </div>
+        <button id="check-ip-btn" class="btn btn-secondary btn-sm">Обновить IP</button>
+      </div>
+
+      <!-- Test Connection & Traffic -->
+      <div class="traffic-section">
+        <div class="traffic-controls">
+          <button id="test-connection-btn" class="btn btn-secondary" disabled>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 6px;">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+              <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            Тест соединения
+          </button>
+        </div>
+        <div class="traffic-stats">
+          <div class="traffic-item">
+            <span class="traffic-label">↓ Входящий</span>
+            <span id="traffic-in" class="traffic-value">0.0 MB</span>
+          </div>
+          <div class="traffic-item">
+            <span class="traffic-label">↑ Исходящий</span>
+            <span id="traffic-out" class="traffic-value">0.0 MB</span>
+          </div>
+          <div class="traffic-item latency-item">
+            <span class="traffic-label">Пинг</span>
+            <span id="latency-value" class="traffic-value">-- ms</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings Panel -->
+    <section id="settings-panel" class="panel settings-layout" style="display: none;">
+      <div class="settings-header">
+        <h2>Настройки</h2>
+        <button id="settings-back-btn" class="btn btn-secondary">Назад</button>
+      </div>
+
+      <div class="settings-scroll-container">
+        <!-- VPN Settings -->
+        <div class="settings-group glassmorphic-card">
+          <h4>Настройки VPN</h4>
+          
+          <div class="switch-row">
+            <span class="switch-label">Включить IPv6</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-ipv6-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <span class="switch-label">Локальный DNS</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-local-dns-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <span class="switch-label">Fake DNS</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-fake-dns-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="input-row">
+            <label for="setting-vpn-dns">DNS для VPN (IPv4/IPv6)</label>
+            <input type="text" id="setting-vpn-dns" placeholder="1.1.1.1,8.8.8.8" class="form-input" />
+          </div>
+
+          <div class="input-row">
+            <label for="setting-vpn-mtu">VPN MTU</label>
+            <input type="number" id="setting-vpn-mtu" placeholder="1500" class="form-input" />
           </div>
         </div>
 
-        <!-- System Settings Section -->
-        <div class="settings-card glassmorphic-card">
+        <!-- Core Settings -->
+        <div class="settings-group glassmorphic-card">
+          <h4>Настройки Ядра (Xray)</h4>
+
           <div class="switch-row">
-            <span class="switch-label">Системный прокси</span>
+            <span class="switch-label">Сниффинг доменов</span>
             <label class="switch-control">
-              <input type="checkbox" id="system-proxy-toggle" checked />
+              <input type="checkbox" id="setting-sniffing-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <span class="switch-label">Разрешить небезопасный TLS (allowInsecure)</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-allow-insecure" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="input-row">
+            <label for="setting-socks-port">Локальный порт SOCKS</label>
+            <input type="number" id="setting-socks-port" placeholder="10808" class="form-input" />
+          </div>
+
+          <div class="input-row">
+            <label for="setting-http-port">Локальный порт HTTP</label>
+            <input type="number" id="setting-http-port" placeholder="10809" class="form-input" />
+          </div>
+
+          <div class="input-row">
+            <label for="setting-remote-dns">Удаленный DNS (через запятую)</label>
+            <input type="text" id="setting-remote-dns" placeholder="1.1.1.1,8.8.8.8" class="form-input" />
+          </div>
+
+          <div class="input-row">
+            <label for="setting-domestic-dns">Домашний DNS (прямой)</label>
+            <input type="text" id="setting-domestic-dns" placeholder="8.8.8.8,1.1.1.1" class="form-input" />
+          </div>
+
+          <div class="switch-row">
+            <span class="switch-label">Авторизация SOCKS5</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-socks-auth-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div id="socks-auth-credentials" style="display: none;">
+            <div class="input-row">
+              <label for="setting-socks-username">Логин SOCKS5</label>
+              <input type="text" id="setting-socks-username" placeholder="username" class="form-input" />
+            </div>
+            <div class="input-row">
+              <label for="setting-socks-password">Пароль SOCKS5</label>
+              <input type="text" id="setting-socks-password" placeholder="password" class="form-input" />
+            </div>
+          </div>
+
+          <div class="switch-row">
+            <span class="switch-label">Включить SOCKS5 UDP</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-socks-enable-udp" />
               <span class="slider round"></span>
             </label>
           </div>
         </div>
 
-        <!-- Server Selector -->
-        <div class="servers-section">
-          <h3>Доступные серверы</h3>
-          <div id="servers-list" class="servers-list">
-            <!-- Dynamically populated -->
-            <div class="loading-placeholder">Загрузка серверов...</div>
+        <!-- Mux Settings -->
+        <div class="settings-group glassmorphic-card">
+          <h4>Настройки Mux (Мультиплексирование)</h4>
+
+          <div class="switch-row">
+            <span class="switch-label">Включить Mux</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-mux-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="input-row">
+            <label for="setting-mux-concurrency">Количество TCP соединений (-1..1024)</label>
+            <input type="number" id="setting-mux-concurrency" placeholder="8" class="form-input" />
           </div>
         </div>
-      </section>
+
+        <!-- Fragment Settings -->
+        <div class="settings-group glassmorphic-card">
+          <h4>Настройки Фрагментации</h4>
+
+          <div class="switch-row">
+            <span class="switch-label">Включить Фрагментацию</span>
+            <label class="switch-control">
+              <input type="checkbox" id="setting-fragment-enabled" />
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="input-row">
+            <label for="setting-fragment-length">Длина фрагментов (например, 50-100)</label>
+            <input type="text" id="setting-fragment-length" placeholder="50-100" class="form-input" />
+          </div>
+
+          <div class="input-row">
+            <label for="setting-fragment-interval">Интервал фрагментов (например, 10-20)</label>
+            <input type="text" id="setting-fragment-interval" placeholder="10-20" class="form-input" />
+          </div>
+        </div>
+
+        <!-- Latency Test Settings -->
+        <div class="settings-group glassmorphic-card">
+          <h4>Проверка задержки</h4>
+
+          <div class="input-row">
+            <label for="setting-latency-url">URL сервиса проверки</label>
+            <input type="text" id="setting-latency-url" placeholder="https://www.gstatic.com/generate_204" class="form-input" />
+          </div>
+        </div>
+
+        <!-- IP Check Settings -->
+        <div class="settings-group glassmorphic-card">
+          <h4>Проверка текущего соединения</h4>
+
+          <div class="input-row">
+            <label for="setting-ip-check-url">URL сервиса проверки IP</label>
+            <input type="text" id="setting-ip-check-url" placeholder="https://api.ip.sb/geoip" class="form-input" />
+          </div>
+        </div>
+      </div>
+      
+      <div class="settings-footer">
+        <button id="settings-save-btn" class="btn btn-primary btn-block">Сохранить настройки</button>
+      </div>
+    </section>
     </main>
 
     <!-- Xray Installer Modal Overlay -->

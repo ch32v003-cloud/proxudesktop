@@ -45,6 +45,9 @@ async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     .initialization_script(
         r#"
         (function () {
+          function isLoginPage() {
+            return location.pathname === '/login' || location.pathname.endsWith('/login');
+          }
           function notifyToken(token, email) {
             if (!token) return;
             window.__PROXU_TOKEN_SENT__ = true;
@@ -52,6 +55,12 @@ async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
           }
           function checkToken() {
             try {
+              // Desktop app must not capture stale dashboard token before fresh Google login.
+              if (isLoginPage() && !location.search.includes('token=')) {
+                localStorage.removeItem('superproxy_token');
+                localStorage.removeItem('superproxy_refresh_token');
+                return;
+              }
               var token = localStorage.getItem('superproxy_token');
               var email = localStorage.getItem('superproxy_email') || '';
               if (token && !window.__PROXU_TOKEN_SENT__) notifyToken(token, email);
@@ -98,6 +107,12 @@ async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
             r#"
             (function () {
               try {
+                var isLoginPage = location.pathname === '/login' || location.pathname.endsWith('/login');
+                if (isLoginPage && !location.search.includes('token=')) {
+                  localStorage.removeItem('superproxy_token');
+                  localStorage.removeItem('superproxy_refresh_token');
+                  return;
+                }
                 var token = localStorage.getItem('superproxy_token');
                 var email = localStorage.getItem('superproxy_email') || '';
                 if (token && !window.__PROXU_TOKEN_SENT__) {
@@ -116,56 +131,189 @@ async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn value_to_string(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| value.as_i64().map(|v| v.to_string()))
+        .or_else(|| value.as_u64().map(|v| v.to_string()))
+}
+
+fn is_supported_link(link: &str) -> bool {
+    link.starts_with("vless://") || link.starts_with("vmess://")
+}
+
+fn value_to_u16(value: &serde_json::Value) -> Option<u16> {
+    value
+        .as_u64()
+        .and_then(|v| u16::try_from(v).ok())
+        .or_else(|| value.as_str().and_then(|s| s.parse::<u16>().ok()))
+}
+
+fn normalize_vpn_id(raw_id: &str) -> String {
+    if raw_id.starts_with("vpn_") {
+        raw_id.to_string()
+    } else {
+        format!("vpn_{raw_id}")
+    }
+}
+
+fn proxy_from_vpn_config(
+    id_hint: &str,
+    name_hint: Option<&str>,
+    vpn: &api::ApiVpnConfig,
+) -> Option<ProxyConfig> {
+    let link = vpn
+        .link
+        .clone()
+        .or(vpn.config.clone())
+        .or(vpn.connection_string.clone())
+        .unwrap_or_default();
+
+    if !is_supported_link(&link) {
+        return None;
+    }
+
+    let parsed_url = url::Url::parse(&link).ok();
+    let server = parsed_url
+        .as_ref()
+        .and_then(|url| url.host_str().map(|host| host.to_string()))
+        .or_else(|| vpn.host.clone())
+        .unwrap_or_else(|| "VPN".to_string());
+    let port = parsed_url
+        .as_ref()
+        .and_then(url::Url::port)
+        .or_else(|| vpn.port.as_ref().and_then(value_to_u16))
+        .unwrap_or(443);
+    let protocol = if link.starts_with("vless://") {
+        "vless"
+    } else {
+        "vmess"
+    };
+    let vpn_id = value_to_string(&vpn.id)
+        .or_else(|| vpn.vpn_id.as_ref().and_then(value_to_string))
+        .unwrap_or_else(|| id_hint.to_string());
+
+    Some(ProxyConfig {
+        id: normalize_vpn_id(&vpn_id),
+        name: name_hint
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| format!("VPN {}", server)),
+        server,
+        port,
+        protocol: protocol.to_string(),
+        link: Some(link),
+    })
+}
+
 #[tauri::command]
 async fn fetch_proxies(token: String) -> Result<Vec<ProxyConfig>, String> {
-    let api_proxies = api::get_proxies(&token).await?;
     let mut mapped_proxies = Vec::new();
 
+    let api_proxies = api::get_proxies(&token).await?;
     for ap in api_proxies {
-        let port = if let Some(p_int) = ap.port.as_u64() {
-            p_int as u16
-        } else if let Some(p_str) = ap.port.as_str() {
-            p_str.parse::<u16>().unwrap_or(0)
-        } else {
-            0
-        };
-
-        let link = ap
+        let mut link = ap
             .link
             .clone()
             .or(ap.connection_string.clone())
             .unwrap_or_default();
+
+        if !is_supported_link(&link) {
+            let protocol = ap.protocol.as_deref().unwrap_or_default().to_lowercase();
+            if protocol == "vpn" || ap.id.starts_with("vpn_") {
+                if let Ok(vpn_config) = api::get_vpn_config(&token, &ap.id).await {
+                    let name_hint = ap
+                        .ip
+                        .as_deref()
+                        .or(ap.domain.as_deref())
+                        .map(|server| format!("VPN {}", server));
+                    if let Some(proxy) =
+                        proxy_from_vpn_config(&ap.id, name_hint.as_deref(), &vpn_config)
+                    {
+                        mapped_proxies.push(proxy);
+                    }
+                }
+            }
+            continue;
+        }
+
+        let port = value_to_u16(&ap.port).unwrap_or(0);
         let server = ap.ip.clone().or(ap.domain.clone()).unwrap_or_default();
         let name = if server.is_empty() {
             format!("Proxy {}", ap.id)
         } else {
             format!("Server {}", server)
         };
-        let protocol = ap.protocol.clone().unwrap_or_else(|| {
-            if link.starts_with("vless://") {
-                "vless".to_string()
-            } else if link.starts_with("vmess://") {
-                "vmess".to_string()
-            } else {
-                "vless".to_string()
-            }
-        });
+        let protocol = if link.starts_with("vless://") {
+            "vless"
+        } else {
+            "vmess"
+        };
 
         mapped_proxies.push(ProxyConfig {
             id: ap.id,
             name,
             server,
             port,
-            protocol,
-            link: Some(link),
+            protocol: protocol.to_string(),
+            link: Some(std::mem::take(&mut link)),
         });
+    }
+
+    if let Ok(vpn_configs) = api::get_user_vpns(&token).await {
+        for vpn in vpn_configs {
+            if let Some(proxy) = proxy_from_vpn_config("vpn", None, &vpn) {
+                if !mapped_proxies
+                    .iter()
+                    .any(|existing| existing.id == proxy.id)
+                {
+                    mapped_proxies.push(proxy);
+                }
+            }
+        }
     }
 
     let mut current_config = config::load_config();
     current_config.proxies = mapped_proxies.clone();
+    if current_config
+        .active_proxy_id
+        .as_ref()
+        .map(|id| !mapped_proxies.iter().any(|p| &p.id == id))
+        .unwrap_or(true)
+    {
+        current_config.active_proxy_id = mapped_proxies.first().map(|p| p.id.clone());
+    }
     let _ = config::save_config(&current_config);
 
     Ok(mapped_proxies)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn proxy_from_vpn_config_keeps_server_proxy_id() {
+        let vpn = api::ApiVpnConfig {
+            id: json!("vpn_mpdh7fxpok38cw0"),
+            vpn_id: None,
+            server_id: None,
+            protocol: Some("vless".to_string()),
+            host: Some("lukjanow.ru".to_string()),
+            port: Some(json!("8443")),
+            link: Some("vless://user@lukjanow.ru:8443?security=reality".to_string()),
+            config: None,
+            connection_string: None,
+        };
+
+        let proxy = proxy_from_vpn_config("vpn_mpdh7fxpok38cw0", None, &vpn).unwrap();
+        assert_eq!(proxy.id, "vpn_mpdh7fxpok38cw0");
+        assert_eq!(proxy.server, "lukjanow.ru");
+        assert_eq!(proxy.port, 8443);
+        assert_eq!(proxy.protocol, "vless");
+    }
 }
 
 #[tauri::command]
@@ -193,9 +341,9 @@ async fn fetch_profile(token: String) -> Result<AppConfig, String> {
 }
 
 #[tauri::command]
-fn start_connection(link: String) -> Result<(), String> {
+async fn start_connection(link: String) -> Result<(), String> {
     let app_config = config::load_config();
-    xray::start_xray(&link, 10808, 10809, app_config.system_proxy_enabled)
+    xray::start_xray(&link, &app_config)
 }
 
 #[tauri::command]
@@ -209,14 +357,183 @@ fn get_connection_status() -> bool {
 }
 
 #[tauri::command]
+async fn get_traffic_stats() -> xray::TrafficStatsResponse {
+    xray::get_traffic_stats().await
+}
+
+#[tauri::command]
 fn check_xray_installed() -> bool {
     xray::get_xray_bin_path().exists()
+}
+
+#[tauri::command]
+fn reset_system_proxy() -> Result<(), String> {
+    eprintln!("[System] Resetting system proxy to disabled on startup");
+    xray::set_system_proxy(false, 10808, 10809)?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_ip() -> Result<serde_json::Value, String> {
+    let app_config = config::load_config();
+    let socks_port = app_config.socks_port;
+    let check_url = app_config.ip_check_url;
+
+    eprintln!("[IP Check] Querying IP through SOCKS5 on port {} via {}", socks_port, check_url);
+
+    let proxy_url = format!("socks5://127.0.0.1:{}", socks_port);
+    let proxy = reqwest::Proxy::all(&proxy_url)
+        .map_err(|e| {
+            eprintln!("[IP Check] Failed to create proxy: {}", e);
+            format!("Failed to create proxy: {e}")
+        })?;
+
+    let client = reqwest::Client::builder()
+        .proxy(proxy)
+        .timeout(std::time::Duration::from_secs(10))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| {
+            eprintln!("[IP Check] Failed to build client: {}", e);
+            format!("Failed to build client: {e}")
+        })?;
+
+    let start = std::time::Instant::now();
+    let result = client.get(&check_url)
+        .send()
+        .await;
+
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(response) => {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            eprintln!("[IP Check] Response: status={}, latency={}ms, body={}", status.as_u16(), elapsed_ms, &body[..body.len().min(200)]);
+
+            if status.is_success() {
+                // Parse JSON response to extract IP and country
+                let json: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::json!({}));
+                let ip = json["ip"].as_str().unwrap_or("unknown").to_string();
+                let country = json["country"].as_str().unwrap_or("").to_string();
+                let city = json["city"].as_str().unwrap_or("").to_string();
+                let isp = json["isp"].as_str().unwrap_or("").to_string();
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "ip": ip,
+                    "country": country,
+                    "city": city,
+                    "isp": isp,
+                    "raw": json,
+                    "latency_ms": elapsed_ms
+                }))
+            } else {
+                Ok(serde_json::json!({
+                    "success": false,
+                    "error": format!("HTTP {}", status.as_u16()),
+                    "latency_ms": elapsed_ms
+                }))
+            }
+        }
+        Err(e) => {
+            eprintln!("[IP Check] Request failed: {}", e);
+            Ok(serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+                "latency_ms": elapsed_ms
+            }))
+        }
+    }
+}
+
+#[tauri::command]
+async fn test_latency() -> Result<serde_json::Value, String> {
+    let app_config = config::load_config();
+    let socks_port = app_config.socks_port;
+    let test_url = app_config.latency_test_url;
+
+    // Use HTTP (not HTTPS) to avoid TLS overhead - same as Android v2rayNG
+    let test_url = if test_url.starts_with("https://") {
+        test_url.replacen("https://", "http://", 1)
+    } else {
+        test_url
+    };
+
+    eprintln!("[Latency Test] Real ping (2x GET, min) through SOCKS5 on port {} via {}", socks_port, test_url);
+
+    let proxy_url = format!("socks5://127.0.0.1:{}", socks_port);
+    let proxy = reqwest::Proxy::all(&proxy_url)
+        .map_err(|e| {
+            eprintln!("[Latency Test] Failed to create proxy: {}", e);
+            format!("Failed to create proxy: {e}")
+        })?;
+
+    // Use a single client with connection pooling (like v2rayN's HttpClient)
+    let client = reqwest::Client::builder()
+        .proxy(proxy)
+        .timeout(std::time::Duration::from_secs(10))
+        .pool_max_idle_per_host(5)
+        .build()
+        .map_err(|e| {
+            eprintln!("[Latency Test] Failed to build client: {}", e);
+            format!("Failed to build client: {e}")
+        })?;
+
+    // Do 2 requests with 100ms delay, take the minimum (same as v2rayN)
+    let mut measurements = Vec::new();
+    
+    for i in 0..2 {
+        let start = std::time::Instant::now();
+        let result = client.get(&test_url).send().await;
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        
+        match result {
+            Ok(response) => {
+                let status = response.status();
+                eprintln!("[Latency Test] Request {}: status={}, latency={}ms", i + 1, status.as_u16(), elapsed_ms);
+                // Consume response body to ensure connection can be reused
+                let _ = response.bytes().await;
+                measurements.push(elapsed_ms);
+            }
+            Err(e) => {
+                eprintln!("[Latency Test] Request {} failed: {} (after {}ms)", i + 1, e, elapsed_ms);
+                measurements.push(elapsed_ms);
+            }
+        }
+        
+        // Wait 100ms between requests (same as v2rayN)
+        if i == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    // Take the minimum valid measurement (like v2rayN)
+    let latency_ms = measurements.iter().copied().min().unwrap_or(0).max(1);
+    eprintln!("[Latency Test] Min latency from {:?} = {}ms", measurements, latency_ms);
+
+    Ok(serde_json::json!({
+        "success": true,
+        "latency_ms": latency_ms,
+        "measurements": measurements
+    }))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|_app| {
+            eprintln!("[System] App startup: resetting system proxy");
+            let _ = xray::set_system_proxy(false, 10808, 10809);
+            Ok(())
+        })
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                eprintln!("[System] Window destroyed: resetting system proxy");
+                let _ = xray::set_system_proxy(false, 10808, 10809);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             download_xray_core,
             get_config,
@@ -228,7 +545,11 @@ pub fn run() {
             start_connection,
             stop_connection,
             get_connection_status,
-            check_xray_installed
+            get_traffic_stats,
+            check_xray_installed,
+            reset_system_proxy,
+            check_ip,
+            test_latency
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

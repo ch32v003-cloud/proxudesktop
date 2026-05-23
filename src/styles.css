@@ -503,3 +503,247 @@ input:checked + .slider:before {
   color: var(--text-muted);
   margin-top: 12px;
 }
+
+/* Settings Layout Styles */
+.settings-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.settings-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border-glass);
+  padding-bottom: 12px;
+}
+
+.settings-header h2 {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.settings-header .btn {
+  width: auto;
+  padding: 8px 16px;
+  font-size: 13px;
+}
+
+.settings-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding-right: 4px;
+  margin-bottom: 20px;
+}
+
+/* Scrollbar styles for settings */
+.settings-scroll-container::-webkit-scrollbar {
+  width: 6px;
+}
+.settings-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings-scroll-container::-webkit-scrollbar-thumb {
+  background: var(--border-glass);
+  border-radius: 3px;
+}
+.settings-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-glass-heavy);
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 16px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-glass);
+}
+
+.settings-group h4 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+}
+
+.input-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-row label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.form-input {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-glass);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--text-primary);
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.form-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.15);
+}
+
+.settings-footer {
+  border-top: 1px solid var(--border-glass);
+  padding-top: 16px;
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* Traffic Section Styles */
+.traffic-section {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-glass);
+}
+
+.traffic-controls {
+  margin-bottom: 14px;
+}
+
+.traffic-controls .btn {
+  width: 100%;
+  justify-content: center;
+  font-size: 13px;
+}
+
+.traffic-controls .btn svg {
+  opacity: 0.8;
+}
+
+/* IP Info Section */
+.ip-info-section {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--surface-glass);
+  border: 1px solid var(--border-glass);
+}
+
+.ip-info-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.ip-info-row:last-child {
+  margin-bottom: 0;
+}
+
+.ip-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  min-width: 70px;
+}
+
+.ip-value {
+  color: var(--text-primary);
+  font-weight: 700;
+  font-family: monospace;
+  font-size: 14px;
+}
+
+.ip-country {
+  color: var(--primary);
+  font-weight: 600;
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.ip-isp {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.ip-info-section .btn-sm {
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.traffic-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-glass);
+}
+
+.traffic-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.traffic-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.traffic-value {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.traffic-item:nth-child(1) .traffic-value {
+  color: var(--success);
+}
+
+.traffic-item:nth-child(2) .traffic-value {
+  color: var(--primary);
+}
+
+.latency-item .traffic-value {
+  color: var(--danger);
+}
+
+.latency-item.testing .traffic-value {
+  color: var(--text-secondary);
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
