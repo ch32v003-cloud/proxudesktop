@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Proxu Desktop
+Comment=VPN client for Proxu with Xray-core integration
+Exec=proxudesktop
+Icon=proxudesktop
+Type=Application
+Categories=Network;Internet;
+Keywords=VPN;Proxy;Xray;
+Terminal=false
+StartupNotify=true

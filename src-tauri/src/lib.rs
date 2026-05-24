@@ -1,9 +1,11 @@
 mod api;
 mod config;
+mod service;
 mod xray;
 
 use config::{AppConfig, ProxyConfig};
 use tauri::{Emitter, Manager};
+use std::env;
 
 #[tauri::command]
 async fn download_xray_core() -> Result<String, String> {
@@ -519,19 +521,88 @@ async fn test_latency() -> Result<serde_json::Value, String> {
     }))
 }
 
+// --- Service commands ---
+
+#[tauri::command]
+fn install_service() -> Result<(), String> {
+    let config = service::ServiceConfig::default();
+    service::install_service(&config)
+}
+
+#[tauri::command]
+fn uninstall_service_cmd() -> Result<(), String> {
+    service::uninstall_service()
+}
+
+#[tauri::command]
+fn start_service_cmd() -> Result<(), String> {
+    service::start_service()
+}
+
+#[tauri::command]
+fn stop_service_cmd() -> Result<(), String> {
+    service::stop_service()
+}
+
+#[tauri::command]
+fn get_service_status_cmd() -> Result<service::ServiceStatus, String> {
+    service::get_service_status()
+}
+
+#[tauri::command]
+fn setup_tun_interface_cmd(name: String, ip: String, gateway: String) -> Result<(), String> {
+    service::setup_tun_interface(&name, &ip, &gateway)
+}
+
+#[tauri::command]
+fn teardown_tun_interface_cmd(name: String) -> Result<(), String> {
+    service::teardown_tun_interface(&name)
+}
+
+// --- API commands ---
+
+#[tauri::command]
+async fn create_proxy(token: String, request: api::CreateProxyRequest) -> Result<api::CreateProxyResponse, String> {
+    api::create_proxy(&token, request).await
+}
+
+#[tauri::command]
+async fn process_payment(token: String, request: api::PaymentRequest) -> Result<api::PaymentResponse, String> {
+    api::process_payment(&token, request).await
+}
+
+#[tauri::command]
+async fn get_transaction_history(token: String, page: u32, per_page: u32) -> Result<api::TransactionHistoryResponse, String> {
+    api::get_transaction_history(&token, page, per_page).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    // Aggressively clear ALL proxy settings before any Tauri/WebView init
+    eprintln!("[System] Pre-init: clearing proxy env vars");
+    env::set_var("http_proxy", "");
+    env::set_var("https_proxy", "");
+    env::set_var("HTTP_PROXY", "");
+    env::set_var("HTTPS_PROXY", "");
+    env::set_var("all_proxy", "");
+    env::set_var("ALL_PROXY", "");
+    env::set_var("no_proxy", "*");
+    env::set_var("NO_PROXY", "*");
+
+    eprintln!("[System] Pre-init: resetting system proxy via gsettings");
+    let _ = xray::set_system_proxy(false, 10808, 10809);
+
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|_app| {
-            eprintln!("[System] App startup: resetting system proxy");
-            let _ = xray::set_system_proxy(false, 10808, 10809);
+            eprintln!("[System] App setup complete");
             Ok(())
         })
         .on_window_event(|_window, event| {
-            if let tauri::WindowEvent::Destroyed = event {
-                eprintln!("[System] Window destroyed: resetting system proxy");
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                eprintln!("[System] Window close requested, resetting system proxy");
                 let _ = xray::set_system_proxy(false, 10808, 10809);
+                let _ = xray::stop_xray();
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -549,8 +620,26 @@ pub fn run() {
             check_xray_installed,
             reset_system_proxy,
             check_ip,
-            test_latency
+            test_latency,
+            install_service,
+            uninstall_service_cmd,
+            start_service_cmd,
+            stop_service_cmd,
+            get_service_status_cmd,
+            setup_tun_interface_cmd,
+            teardown_tun_interface_cmd,
+            create_proxy,
+            process_payment,
+            get_transaction_history
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    
+    app.run(|_app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            eprintln!("[System] Exit requested, resetting system proxy");
+            let _ = xray::set_system_proxy(false, 10808, 10809);
+            let _ = xray::stop_xray();
+        }
+    });
 }

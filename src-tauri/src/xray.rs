@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::Duration;
 use url::Url;
 use zip::ZipArchive;
 
@@ -45,7 +46,10 @@ fn target_xray_asset_name() -> Result<&'static str, String> {
 
 async fn resolve_latest_xray_url() -> Result<String, String> {
     let asset_name = target_xray_asset_name()?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("Failed to build client: {e}"))?;
     let release: Value = client
         .get("https://api.github.com/repos/XTLS/Xray-core/releases/latest")
         .header("User-Agent", "ProxuDesktop/0.1")
@@ -81,7 +85,10 @@ pub async fn download_xray_if_needed() -> Result<String, String> {
     }
 
     let url = resolve_latest_xray_url().await?;
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("Failed to build client: {e}"))?;
     let response = client
         .get(&url)
         .header("User-Agent", "ProxuDesktop/0.1")
@@ -643,11 +650,14 @@ pub async fn get_traffic_stats() -> TrafficStatsResponse {
             }
 
             if total_received > 0 || total_sent > 0 {
-                result.in_bytes = total_received;
-                result.out_bytes = total_sent;
+                // For SOCKS5 server (Xray):
+                // bytes_sent = data TO client (incoming traffic, e.g. YouTube video)
+                // bytes_received = data FROM client (outgoing requests)
+                result.in_bytes = total_sent;
+                result.out_bytes = total_received;
                 eprintln!(
                     "[Traffic Stats] Xray server sockets: in={} out={}",
-                    total_received, total_sent
+                    total_sent, total_received
                 );
                 return result;
             }
@@ -688,17 +698,42 @@ pub async fn get_traffic_stats() -> TrafficStatsResponse {
     result
 }
 
+fn get_proxy_mode() -> String {
+    let output = Command::new("gsettings")
+        .args(["get", "org.gnome.system.proxy", "mode"])
+        .output();
+    match output {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).trim().trim_matches('\'').to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+fn wait_for_proxy_mode(expected: &str) {
+    for _ in 0..20 {
+        let current = get_proxy_mode();
+        if current == expected {
+            eprintln!("[Proxy] confirmed mode={} after poll", expected);
+            return;
+        }
+        eprintln!("[Proxy] mode={}, waiting for {}", current, expected);
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    eprintln!("[Proxy] timeout waiting for mode={}, current={}", expected, get_proxy_mode());
+}
+
 pub fn set_system_proxy(enable: bool, socks_port: u16, http_port: u16) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         if which::which("gsettings").is_err() {
+            eprintln!("[Proxy] gsettings not found, skipping");
             return Ok(());
         }
 
         let mode = if enable { "manual" } else { "none" };
-        let _ = Command::new("gsettings")
+        let status = Command::new("gsettings")
             .args(["set", "org.gnome.system.proxy", "mode", mode])
             .status();
+        eprintln!("[Proxy] set mode={}: {:?}", mode, status);
 
         if enable {
             let http_port = http_port.to_string();
@@ -710,11 +745,32 @@ pub fn set_system_proxy(enable: bool, socks_port: u16, http_port: u16) -> Result
                 vec!["set", "org.gnome.system.proxy.https", "port", &http_port],
                 vec!["set", "org.gnome.system.proxy.socks", "host", "127.0.0.1"],
                 vec!["set", "org.gnome.system.proxy.socks", "port", &socks_port],
+                vec!["set", "org.gnome.system.proxy", "ignore-hosts", "['localhost', '127.0.0.0/8', '::1', '192.168.0.0/16', '10.0.0.0/8', '172.16.0.0/12']"],
             ];
 
             for args in commands {
-                let _ = Command::new("gsettings").args(args).status();
+                let s = Command::new("gsettings").args(args).status();
+                eprintln!("[Proxy] enable cmd: {:?}", s);
             }
+        } else {
+            let clear_commands: Vec<Vec<&str>> = vec![
+                vec!["set", "org.gnome.system.proxy.http", "host", ""],
+                vec!["set", "org.gnome.system.proxy.http", "port", "0"],
+                vec!["set", "org.gnome.system.proxy.https", "host", ""],
+                vec!["set", "org.gnome.system.proxy.https", "port", "0"],
+                vec!["set", "org.gnome.system.proxy.socks", "host", ""],
+                vec!["set", "org.gnome.system.proxy.socks", "port", "0"],
+                vec!["set", "org.gnome.system.proxy", "ignore-hosts", "[]"],
+            ];
+            for args in clear_commands {
+                let s = Command::new("gsettings").args(args).status();
+                eprintln!("[Proxy] clear cmd: {:?}", s);
+            }
+        }
+
+        // Verify actual proxy mode and wait until it takes effect
+        if !enable {
+            wait_for_proxy_mode("none");
         }
     }
 
@@ -748,6 +804,20 @@ pub fn set_system_proxy(enable: bool, socks_port: u16, http_port: u16) -> Result
                     "REG_SZ",
                     "/d",
                     &server_val,
+                    "/f",
+                ])
+                .status();
+            
+            let _ = Command::new("reg")
+                .args([
+                    "add",
+                    "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                    "/v",
+                    "ProxyOverride",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*",
                     "/f",
                 ])
                 .status();

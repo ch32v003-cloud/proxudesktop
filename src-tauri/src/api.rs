@@ -42,8 +42,16 @@ pub struct ApiUserProfile {
     pub email: Option<String>,
 }
 
+fn api_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .user_agent("ProxuDesktop/0.1")
+        .build()
+        .expect("Failed to build reqwest client")
+}
+
 fn auth_get(token: &str, url: String) -> reqwest::RequestBuilder {
-    reqwest::Client::new()
+    api_client()
         .get(url)
         .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/json")
@@ -196,4 +204,124 @@ mod tests {
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].id, json!("vpn_4"));
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CreateProxyRequest {
+    pub name: String,
+    pub server: String,
+    pub port: u16,
+    pub protocol: String,
+    pub link: String,
+    pub type_: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct CreateProxyResponse {
+    pub id: String,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PaymentRequest {
+    pub amount: f64,
+    pub currency: String,
+    pub method: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PaymentResponse {
+    pub payment_id: String,
+    pub status: String,
+    pub payment_url: Option<String>,
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Transaction {
+    pub id: String,
+    pub date: String,
+    pub amount: f64,
+    pub currency: String,
+    pub description: String,
+    pub status: String,
+    pub transaction_type: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TransactionHistoryResponse {
+    pub transactions: Vec<Transaction>,
+    pub total: u32,
+    pub page: u32,
+    pub per_page: u32,
+}
+
+fn auth_post(token: &str, url: String) -> reqwest::RequestBuilder {
+    api_client()
+        .post(url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+}
+
+fn auth_get_with_params(token: &str, url: String, params: Vec<(&str, String)>) -> reqwest::RequestBuilder {
+    let mut request = api_client()
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .header("Accept", "application/json");
+    
+    for (key, value) in params {
+        request = request.query(&[(key, &value)]);
+    }
+    
+    request
+}
+
+pub async fn create_proxy(token: &str, request: CreateProxyRequest) -> Result<CreateProxyResponse, String> {
+    let url = format!("{}/proxies", BASE_URL);
+    
+    let res = auth_post(token, url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Network request failed: {}", e))?;
+
+    let value = json_response(res, "create proxy").await?;
+    serde_json::from_value::<CreateProxyResponse>(value)
+        .map_err(|e| format!("Failed to parse create proxy response: {}", e))
+}
+
+pub async fn process_payment(token: &str, request: PaymentRequest) -> Result<PaymentResponse, String> {
+    let url = format!("{}/payment", BASE_URL);
+    
+    let res = auth_post(token, url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("Network request failed: {}", e))?;
+
+    let value = json_response(res, "payment").await?;
+    serde_json::from_value::<PaymentResponse>(value)
+        .map_err(|e| format!("Failed to parse payment response: {}", e))
+}
+
+pub async fn get_transaction_history(
+    token: &str,
+    page: u32,
+    per_page: u32,
+) -> Result<TransactionHistoryResponse, String> {
+    let url = format!("{}/transactions", BASE_URL);
+    let params = vec![
+        ("page", page.to_string()),
+        ("per_page", per_page.to_string()),
+    ];
+    
+    let res = auth_get_with_params(token, url, params)
+        .send()
+        .await
+        .map_err(|e| format!("Network request failed: {}", e))?;
+
+    let value = json_response(res, "transactions").await?;
+    serde_json::from_value::<TransactionHistoryResponse>(value)
+        .map_err(|e| format!("Failed to parse transactions: {}", e))
 }
