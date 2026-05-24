@@ -21,7 +21,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' tauri: asset: http://localhost:* https://proxu.pro https://github.com https://api.github.com https://objects.githubusercontent.com; img-src 'self' asset: data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost https://proxu.pro https://api.github.com https://github.com https://objects.githubusercontent.com"
+      "csp": "default-src 'self' tauri: asset: http://localhost:* https://proxu.pro https://github.com https://api.github.com https://objects.githubusercontent.com https://yoomoney.ru https://*.yoomoney.ru; img-src 'self' asset: data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost https://proxu.pro https://api.github.com https://github.com https://objects.githubusercontent.com"
     }
   },
   "bundle": {

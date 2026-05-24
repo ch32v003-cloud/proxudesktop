@@ -29,7 +29,7 @@ fn get_login_url() -> String {
 
 #[tauri::command]
 async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), String> {
-    let url = "https://proxu.pro/login?redirect=app"
+    let url = "https://proxu.pro/api/public/auth/google"
         .parse::<tauri::Url>()
         .map_err(|e| e.to_string())?;
 
@@ -199,13 +199,21 @@ fn proxy_from_vpn_config(
 
     Some(ProxyConfig {
         id: normalize_vpn_id(&vpn_id),
-        name: name_hint
-            .map(|name| name.to_string())
+        name: extract_vless_name(&link)
+            .or_else(|| name_hint.map(|n| n.to_string()))
             .unwrap_or_else(|| format!("VPN {}", server)),
         server,
         port,
         protocol: protocol.to_string(),
         link: Some(link),
+    })
+}
+
+fn extract_vless_name(link: &str) -> Option<String> {
+    url::Url::parse(link).ok()?.fragment().map(|f| {
+        urlencoding::decode(f)
+            .unwrap_or_else(|_| std::borrow::Cow::Borrowed(f))
+            .to_string()
     })
 }
 
@@ -228,8 +236,7 @@ async fn fetch_proxies(token: String) -> Result<Vec<ProxyConfig>, String> {
                     let name_hint = ap
                         .ip
                         .as_deref()
-                        .or(ap.domain.as_deref())
-                        .map(|server| format!("VPN {}", server));
+                        .or(ap.domain.as_deref());
                     if let Some(proxy) =
                         proxy_from_vpn_config(&ap.id, name_hint.as_deref(), &vpn_config)
                     {
@@ -242,11 +249,16 @@ async fn fetch_proxies(token: String) -> Result<Vec<ProxyConfig>, String> {
 
         let port = value_to_u16(&ap.port).unwrap_or(0);
         let server = ap.ip.clone().or(ap.domain.clone()).unwrap_or_default();
-        let name = if server.is_empty() {
-            format!("Proxy {}", ap.id)
-        } else {
-            format!("Server {}", server)
-        };
+        let name = extract_vless_name(&link)
+            .or_else(|| ap.name.clone())
+            .or_else(|| ap.remarks.clone())
+            .unwrap_or_else(|| {
+                if server.is_empty() {
+                    format!("Proxy {}", ap.id)
+                } else {
+                    format!("Server {}", server)
+                }
+            });
         let protocol = if link.starts_with("vless://") {
             "vless"
         } else {
@@ -576,6 +588,78 @@ async fn get_transaction_history(token: String, page: u32, per_page: u32) -> Res
     api::get_transaction_history(&token, page, per_page).await
 }
 
+#[tauri::command]
+async fn auto_create_profile(token: String) -> Result<api::AutoCreateProfileResponse, String> {
+    api::auto_create_profile(&token).await
+}
+
+#[tauri::command]
+async fn create_payment_cmd(token: String, amount: f64, payment_method: String) -> Result<api::CreatePaymentResponse, String> {
+    api::create_payment(&token, amount, &payment_method).await
+}
+
+#[tauri::command]
+async fn get_payment_status_cmd(token: String, payment_id: String) -> Result<api::PaymentStatusResponse, String> {
+    api::get_payment_status(&token, &payment_id).await
+}
+
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Failed to open URL: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn open_payment_window(app_handle: tauri::AppHandle, url: String, payment_id: String, token: String) -> Result<(), String> {
+    let payment_url = url.parse::<tauri::Url>()
+        .map_err(|e| format!("Invalid payment URL: {}", e))?;
+
+    let _window = tauri::WebviewWindowBuilder::new(
+        &app_handle,
+        "payment",
+        tauri::WebviewUrl::External(payment_url),
+    )
+    .title("Оплата")
+    .inner_size(500.0, 700.0)
+    .resizable(true)
+    .build()
+    .map_err(|e| format!("Failed to create payment window: {}", e))?;
+
+    // Poll payment status in background
+    let handle = app_handle.clone();
+    tokio::spawn(async move {
+        for i in 0..60 {
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            match api::get_payment_status(&token, &payment_id).await {
+                Ok(status) => {
+                    let s = status.status.as_deref().unwrap_or("");
+                    eprintln!("[Payment] Poll {}: status={:?}", i + 1, s);
+                    if s == "succeeded" || s == "success" || s == "completed" {
+                        eprintln!("[Payment] Payment succeeded!");
+                        let _ = handle.emit("payment-success", ());
+                        if let Some(window) = handle.get_webview_window("payment") {
+                            let _ = window.close();
+                        }
+                        return;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[Payment] Status poll failed: {}", e);
+                }
+            }
+            // Check if window was closed by user
+            if handle.get_webview_window("payment").is_none() {
+                eprintln!("[Payment] Window closed by user, stopping poll");
+                return;
+            }
+        }
+        eprintln!("[Payment] Poll timeout (5 min)");
+    });
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Aggressively clear ALL proxy settings before any Tauri/WebView init
@@ -630,7 +714,12 @@ pub fn run() {
             teardown_tun_interface_cmd,
             create_proxy,
             process_payment,
-            get_transaction_history
+            get_transaction_history,
+            auto_create_profile,
+            create_payment_cmd,
+            get_payment_status_cmd,
+            open_url,
+            open_payment_window
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

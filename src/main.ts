@@ -161,6 +161,14 @@ const ipCountryText = document.getElementById("ip-country") as HTMLElement;
 const ipIspText = document.getElementById("ip-isp") as HTMLElement;
 const checkIpBtn = document.getElementById("check-ip-btn") as HTMLButtonElement;
 
+// Recharge Elements
+const rechargeBtn = document.getElementById("recharge-btn") as HTMLButtonElement;
+const rechargeOverlay = document.getElementById("recharge-overlay") as HTMLElement;
+const rechargeAmount = document.getElementById("recharge-amount") as HTMLInputElement;
+const rechargeCancelBtn = document.getElementById("recharge-cancel-btn") as HTMLButtonElement;
+const rechargeConfirmBtn = document.getElementById("recharge-confirm-btn") as HTMLButtonElement;
+const rechargeStatus = document.getElementById("recharge-status") as HTMLElement;
+
 // Traffic Stats State
 let trafficInBytes = 0;
 let trafficOutBytes = 0;
@@ -343,7 +351,14 @@ function renderServers() {
   serversListContainer.innerHTML = "";
 
   if (appConfig.proxies.length === 0) {
-    serversListContainer.innerHTML = '<div class="loading-placeholder">Нет активных VPN профилей</div>';
+    serversListContainer.innerHTML = `
+      <div class="loading-placeholder">Нет активных VPN профилей</div>
+      <button id="btn-create-profile" class="btn btn-primary">Создать профиль</button>
+    `;
+    const createBtn = document.getElementById("btn-create-profile") as HTMLButtonElement;
+    if (createBtn) {
+      createBtn.addEventListener("click", createProfile);
+    }
     return;
   }
 
@@ -352,11 +367,19 @@ function renderServers() {
     const card = document.createElement("div");
     card.className = `server-card ${isSelected ? "selected" : ""}`;
     card.innerHTML = `
-      <div class="server-info">
-        <span class="server-name">${proxy.name}</span>
-        <span class="server-meta">${proxy.protocol} • ${proxy.server}:${proxy.port}</span>
+      <div class="server-card-indicator"></div>
+      <div class="server-card-body">
+        <div class="server-card-top">
+          <div>
+            <div class="server-name">${proxy.name}</div>
+            <div class="server-address">${proxy.server}:${proxy.port}</div>
+          </div>
+        </div>
+        <div class="server-card-bottom">
+          <span class="server-protocol">${proxy.protocol}</span>
+          <span class="server-ping">Вкл.</span>
+        </div>
       </div>
-      <span class="server-ping">Вкл.</span>
     `;
 
     card.addEventListener("click", () => {
@@ -365,6 +388,131 @@ function renderServers() {
 
     serversListContainer.appendChild(card);
   });
+}
+
+async function createProfile() {
+  if (!appConfig.token) {
+    console.error("[CreateProfile] No token available");
+    return;
+  }
+
+  console.log("[CreateProfile] Starting profile creation...");
+  const createBtn = document.getElementById("btn-create-profile") as HTMLButtonElement;
+  if (createBtn) {
+    createBtn.disabled = true;
+    createBtn.textContent = "Создание...";
+  }
+
+  try {
+    console.log("[CreateProfile] Calling auto_create_profile API...");
+    const result = await invoke<{ id: string; link: string; name: string; server: string; port: number; protocol: string }>("auto_create_profile", { token: appConfig.token });
+    console.log("[CreateProfile] Profile created:", result);
+
+    // Refresh profiles from server to get the new one with proper names
+    console.log("[CreateProfile] Refreshing profiles...");
+    await refreshProfileAndProxies();
+
+    // Auto-select the new profile and connect
+    const newProxy = appConfig.proxies.find(p => p.id === result.id);
+    if (newProxy) {
+      console.log("[CreateProfile] Auto-selecting new profile:", newProxy.name);
+      appConfig.active_proxy_id = newProxy.id;
+      await invoke("save_config", { config: appConfig });
+    } else {
+      console.warn("[CreateProfile] New profile not found in refreshed list, id:", result.id);
+    }
+    renderServers();
+
+    console.log("[CreateProfile] Success!");
+    alert("Профиль создан!");
+  } catch (error) {
+    console.error("[CreateProfile] Error:", error);
+    alert("Ошибка при создании профиля: " + error);
+  } finally {
+    if (createBtn) {
+      createBtn.disabled = false;
+      createBtn.textContent = "Создать профиль";
+    }
+  }
+}
+
+async function showRechargeModal() {
+  if (!appConfig.token) return;
+  rechargeAmount.value = "";
+  rechargeStatus.textContent = "";
+  rechargeOverlay.style.display = "flex";
+}
+
+async function doRecharge() {
+  if (!appConfig.token) {
+    console.error("[Recharge] No token available");
+    return;
+  }
+
+  const amountText = rechargeAmount.value;
+  const amount = parseFloat(amountText);
+
+  if (!amount || amount < 100 || amount > 50000) {
+    console.warn("[Recharge] Invalid amount:", amountText);
+    rechargeStatus.textContent = "Введите сумму от 100 до 50000 RUB";
+    rechargeStatus.style.color = "var(--danger)";
+    return;
+  }
+
+  const selectedMethod = (document.querySelector('input[name="payment_method"]:checked') as HTMLInputElement)?.value || "sbp";
+  console.log("[Recharge] Creating payment:", { amount, method: selectedMethod });
+
+  rechargeConfirmBtn.disabled = true;
+  rechargeConfirmBtn.textContent = "Создание...";
+  rechargeStatus.textContent = "Создание платежа...";
+  rechargeStatus.style.color = "var(--text-secondary)";
+
+  try {
+    console.log("[Recharge] Calling create_payment_cmd...");
+    const result = await invoke<{ payment_id?: string; id?: string; payment_url?: string; status?: string }>("create_payment_cmd", {
+      token: appConfig.token,
+      amount,
+      paymentMethod: selectedMethod,
+    });
+    console.log("[Recharge] Payment created:", result);
+
+    const paymentId = result.payment_id || result.id || "";
+    const paymentUrl = result.payment_url || "";
+
+    if (paymentUrl && paymentId) {
+      console.log("[Recharge] Opening payment window with URL:", paymentUrl);
+      rechargeStatus.textContent = "Открываем окно оплаты...";
+      rechargeStatus.style.color = "var(--success)";
+
+      // Open payment in-app window
+      try {
+        await invoke("open_payment_window", {
+          url: paymentUrl,
+          paymentId: paymentId,
+          token: appConfig.token,
+        });
+        console.log("[Recharge] Payment window opened");
+        rechargeOverlay.style.display = "none";
+      } catch (e) {
+        console.error("[Recharge] Failed to open payment window:", e);
+        rechargeStatus.textContent = "Ошибка открытия окна оплаты: " + e;
+        rechargeStatus.style.color = "var(--danger)";
+        // Fallback: try window.open
+        window.open(paymentUrl, "_blank");
+      }
+    } else {
+      console.error("[Recharge] No payment URL/ID in response:", result);
+      rechargeStatus.textContent = "Не удалось создать платеж";
+      rechargeStatus.style.color = "var(--danger)";
+    }
+  } catch (error) {
+    console.error("[Recharge] Error:", error);
+    rechargeStatus.textContent = "Ошибка: " + error;
+    rechargeStatus.style.color = "var(--danger)";
+  } finally {
+    rechargeConfirmBtn.disabled = false;
+    rechargeConfirmBtn.textContent = "Пополнить";
+  }
 }
 
 async function selectServer(proxy: ProxyConfig) {
@@ -713,5 +861,26 @@ window.addEventListener("DOMContentLoaded", () => {
     if (email) appConfig.email = email;
     showDashboard();
     refreshProfileAndProxies();
+  });
+
+  // Listen to payment success event from Rust
+  listen("payment-success", () => {
+    console.log("[Recharge] Payment succeeded! Refreshing balance...");
+    refreshProfileAndProxies();
+    alert("Баланс пополнен!");
+  });
+
+  // Recharge handlers
+  rechargeBtn.addEventListener("click", showRechargeModal);
+  rechargeCancelBtn.addEventListener("click", () => {
+    rechargeOverlay.style.display = "none";
+  });
+  rechargeConfirmBtn.addEventListener("click", doRecharge);
+
+  // Close recharge modal on overlay click
+  rechargeOverlay.addEventListener("click", (e) => {
+    if (e.target === rechargeOverlay) {
+      rechargeOverlay.style.display = "none";
+    }
   });
 });
